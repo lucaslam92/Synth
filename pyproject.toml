@@ -1,0 +1,25 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.backends.legacy:build"
+
+[project]
+name = "synth"
+version = "0.1.0"
+description = "Cross-repository code graph to natural language feature description synthesizer"
+requires-python = ">=3.10"
+dependencies = [
+    "anthropic>=0.40.0",
+    "networkx>=3.0",
+    "typer>=0.9.0",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+leiden = ["graspologic>=3.0"]
+
+[project.scripts]
+synth = "synth.__main__:app"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["synth*"]
