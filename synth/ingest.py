@@ -19,6 +19,8 @@ import networkx as nx
 
 from .config import RepoConfig
 
+_SNIPPET_LINES = 10  # lines of source code to capture per node
+
 
 # ---------------------------------------------------------------------------
 # Public API
@@ -40,6 +42,7 @@ def load_repo_graph(repo: RepoConfig) -> nx.DiGraph:
 
     g = nx.DiGraph()
     prefix = repo.name
+    repo_root = repo.graph.parent.parent
 
     # --- nodes ---
     for node in data.get("nodes", []):
@@ -47,6 +50,9 @@ def load_repo_graph(repo: RepoConfig) -> nx.DiGraph:
         attrs = {k: v for k, v in node.items() if k != "id"}
         attrs["original_id"] = node["id"]
         attrs["repo"] = repo.name
+        attrs["snippet"] = _read_snippet(
+            repo_root, node.get("source_file", ""), node.get("line_number", 0)
+        )
         g.add_node(nid, **attrs)
 
     # --- edges ---
@@ -77,3 +83,16 @@ def load_all_graphs(repos: list[RepoConfig]) -> dict[str, nx.DiGraph]:
 def _ns(prefix: str, node_id: str) -> str:
     """Namespace a node ID: 'user-service/auth_controller'."""
     return f"{prefix}/{node_id}"
+
+
+def _read_snippet(repo_root: Path, source_file: str, line_number: int) -> str:
+    """Read up to _SNIPPET_LINES lines of source starting at line_number."""
+    if not source_file or line_number <= 0:
+        return ""
+    path = repo_root / source_file
+    try:
+        lines = path.read_text(encoding="utf-8", errors="replace").splitlines()
+        start = max(0, line_number - 1)
+        return "\n".join(lines[start : start + _SNIPPET_LINES])
+    except OSError:
+        return ""

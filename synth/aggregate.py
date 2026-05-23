@@ -141,10 +141,12 @@ def build_hierarchy(
         for nid in node_ids[:60]:
             d = merged_graph.nodes[nid]
             node_summaries.append({
+                "id": nid,
                 "label": d.get("label", ""),
                 "file_type": d.get("file_type", ""),
                 "source_file": d.get("source_file", ""),
                 "line": d.get("line_number", 0),
+                "snippet": d.get("snippet", ""),
             })
 
         # Internal edges (same community, not cross-repo, cap 80)
