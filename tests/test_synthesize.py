@@ -34,15 +34,21 @@ def cache(tmp_path: Path) -> Cache:
 
 @pytest.fixture
 def synth(llm_cfg: LLMConfig, cache: Cache) -> Synthesizer:
-    """Synthesizer with a mocked Anthropic client."""
-    with patch("synth.synthesize.anthropic.Anthropic") as MockClient:
-        mock_msg = MagicMock()
-        mock_msg.content = [MagicMock(text="**模块名称**：认证模块\n**职责概述**：处理用户认证。\n- AuthController 接收请求")]
-        mock_msg.usage.input_tokens = 100
-        mock_msg.usage.output_tokens = 50
+    """Synthesizer with a mocked Anthropic client.
+
+    anthropic is now lazily imported via _import_anthropic(), so we patch
+    the class directly on the already-imported module.
+    """
+    mock_msg = MagicMock()
+    mock_msg.content = [MagicMock(text="**模块名称**：认证模块\n**职责概述**：处理用户认证。\n- AuthController 接收请求")]
+    mock_msg.usage.input_tokens = 100
+    mock_msg.usage.output_tokens = 50
+
+    with patch("anthropic.Anthropic") as MockClient:
         MockClient.return_value.messages.create.return_value = mock_msg
         s = Synthesizer(llm_cfg, cache, language="zh")
-        s._client = MockClient.return_value
+    # keep the mock client alive after the context exits
+    s._client = MockClient.return_value
     return s
 
 
@@ -279,26 +285,55 @@ class TestSynthesizerFeatureLevel:
 
 
 class TestSynthesizerAPIKey:
-    def test_missing_key_raises_clear_error(self, cache: Cache) -> None:
-        cfg = LLMConfig(model="claude-opus-4-6", max_tokens=512, api_key="")
+    def test_anthropic_missing_key_raises(self, cache: Cache) -> None:
+        cfg = LLMConfig(provider="anthropic", model="claude-opus-4-6", api_key="")
         with pytest.MonkeyPatch().context() as mp:
             mp.delenv("ANTHROPIC_API_KEY", raising=False)
             with pytest.raises(ValueError, match="API Key"):
                 Synthesizer(cfg, cache)
 
-    def test_config_key_takes_priority_over_env(self, cache: Cache) -> None:
-        cfg = LLMConfig(model="claude-opus-4-6", max_tokens=512, api_key="sk-from-config")
+    def test_anthropic_config_key_priority(self, cache: Cache) -> None:
+        cfg = LLMConfig(provider="anthropic", model="claude-opus-4-6", api_key="sk-from-config")
         with pytest.MonkeyPatch().context() as mp:
             mp.setenv("ANTHROPIC_API_KEY", "sk-from-env")
             s = Synthesizer(cfg, cache)
         assert s._client.api_key == "sk-from-config"
 
-    def test_env_key_used_when_config_empty(self, cache: Cache) -> None:
-        cfg = LLMConfig(model="claude-opus-4-6", max_tokens=512, api_key="")
+    def test_anthropic_env_key_fallback(self, cache: Cache) -> None:
+        cfg = LLMConfig(provider="anthropic", model="claude-opus-4-6", api_key="")
         with pytest.MonkeyPatch().context() as mp:
             mp.setenv("ANTHROPIC_API_KEY", "sk-from-env")
             s = Synthesizer(cfg, cache)
         assert s._client.api_key == "sk-from-env"
+
+    def test_openai_missing_key_raises(self, cache: Cache) -> None:
+        cfg = LLMConfig(provider="openai", model="gpt-4o", api_key="")
+        with pytest.MonkeyPatch().context() as mp:
+            mp.delenv("OPENAI_API_KEY", raising=False)
+            with pytest.raises(ValueError, match="API Key"):
+                Synthesizer(cfg, cache)
+
+    def test_openai_env_key_used(self, cache: Cache) -> None:
+        cfg = LLMConfig(provider="openai", model="gpt-4o", api_key="")
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setenv("OPENAI_API_KEY", "sk-openai-test")
+            s = Synthesizer(cfg, cache)
+        assert s._client.api_key == "sk-openai-test"
+
+    def test_openai_compatible_requires_base_url(self, cache: Cache) -> None:
+        cfg = LLMConfig(provider="openai-compatible", model="glm-4", api_key="key", base_url="")
+        with pytest.raises(ValueError, match="base_url"):
+            Synthesizer(cfg, cache)
+
+    def test_openai_compatible_with_base_url(self, cache: Cache) -> None:
+        cfg = LLMConfig(
+            provider="openai-compatible", model="glm-4-flash",
+            api_key="glm-key",
+            base_url="https://open.bigmodel.cn/api/paas/v4/",
+        )
+        s = Synthesizer(cfg, cache)
+        assert s._client.api_key == "glm-key"
+        assert "bigmodel" in str(s._client.base_url)
 
 
 class TestSynthesizerLanguage:

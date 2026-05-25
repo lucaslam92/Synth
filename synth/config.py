@@ -48,11 +48,25 @@ class CacheConfig:
 
 @dataclass
 class LLMConfig:
+    # Provider 决定使用哪个 SDK 和鉴权方式：
+    #   anthropic         — Anthropic SDK，支持 prompt caching（推荐，默认）
+    #   openai            — OpenAI SDK，使用官方 OpenAI API
+    #   openai-compatible — OpenAI SDK + 自定义 base_url，适配 GLM / DeepSeek /
+    #                       Qwen / Ollama 等兼容 OpenAI 接口的服务
+    provider: Literal["anthropic", "openai", "openai-compatible"] = "anthropic"
     model: str = "claude-opus-4-6"
     max_tokens: int = 2048
-    # API Key 优先级：synth.toml [llm] api_key > ANTHROPIC_API_KEY 环境变量
-    # 留空则自动从环境变量读取
+    # API Key 优先级：synth.toml [llm] api_key > 对应的环境变量
+    #   anthropic         → ANTHROPIC_API_KEY
+    #   openai            → OPENAI_API_KEY
+    #   openai-compatible → api_key（必填，或 OPENAI_API_KEY 作为 fallback）
     api_key: str = ""
+    # 仅 openai-compatible 需要填写，指向对应服务的 API 地址
+    #   GLM:      https://open.bigmodel.cn/api/paas/v4/
+    #   DeepSeek: https://api.deepseek.com/v1
+    #   Qwen:     https://dashscope.aliyuncs.com/compatible-mode/v1
+    #   Ollama:   http://localhost:11434/v1
+    base_url: str = ""
 
 
 @dataclass
@@ -104,10 +118,18 @@ def load_config(path: Path = Path("synth.toml")) -> SynthConfig:
     )
 
     llm = data.get("llm", {})
+    provider = llm.get("provider", "anthropic")
+    if provider not in ("anthropic", "openai", "openai-compatible"):
+        raise ValueError(
+            f"[llm] provider 无效值: {provider!r}\n"
+            "可选值: anthropic | openai | openai-compatible"
+        )
     llm_cfg = LLMConfig(
+        provider=provider,
         model=llm.get("model", "claude-opus-4-6"),
         max_tokens=llm.get("max_tokens", 2048),
         api_key=llm.get("api_key", ""),
+        base_url=llm.get("base_url", ""),
     )
 
     return SynthConfig(repos=repos, output=output, cache=cache, llm=llm_cfg)

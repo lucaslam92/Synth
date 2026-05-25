@@ -21,13 +21,56 @@ enabled = true
 
 # ---------------------------------------------------------------------------
 # LLM 配置
+#
+# provider 支持三种模式：
+#   anthropic         — Anthropic Claude（默认，支持 prompt caching 降低成本）
+#   openai            — OpenAI GPT 系列
+#   openai-compatible — 任何兼容 OpenAI 接口的服务（GLM / DeepSeek / Qwen / Ollama 等）
+#
+# api_key 优先级：此处设置 > 对应的环境变量（建议用环境变量，避免提交到 git）
 # ---------------------------------------------------------------------------
+
+# ----- Anthropic Claude（默认）-----
 [llm]
+provider   = "anthropic"
 model      = "claude-opus-4-6"
 max_tokens = 2048
-# api_key 可选。优先级：此处设置 > ANTHROPIC_API_KEY 环境变量
-# 建议用环境变量，避免将密钥提交到 git
-# api_key = "sk-ant-..."
+# api_key  = "sk-ant-..."   # 或 export ANTHROPIC_API_KEY=sk-ant-...
+
+# ----- OpenAI -----
+# [llm]
+# provider   = "openai"
+# model      = "gpt-4o"
+# max_tokens = 2048
+# api_key    = "sk-..."   # 或 export OPENAI_API_KEY=sk-...
+
+# ----- 智谱 GLM -----
+# [llm]
+# provider   = "openai-compatible"
+# model      = "glm-4-flash"
+# base_url   = "https://open.bigmodel.cn/api/paas/v4/"
+# api_key    = "your-zhipuai-key"
+
+# ----- DeepSeek -----
+# [llm]
+# provider   = "openai-compatible"
+# model      = "deepseek-chat"
+# base_url   = "https://api.deepseek.com/v1"
+# api_key    = "your-deepseek-key"
+
+# ----- 阿里云百炼 Qwen -----
+# [llm]
+# provider   = "openai-compatible"
+# model      = "qwen-turbo"
+# base_url   = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+# api_key    = "your-dashscope-key"
+
+# ----- Ollama（本地）-----
+# [llm]
+# provider   = "openai-compatible"
+# model      = "qwen2.5:7b"
+# base_url   = "http://localhost:11434/v1"
+# api_key    = "ollama"   # Ollama 不校验 key，随意填一个即可
 
 # ---------------------------------------------------------------------------
 # 仓库配置

@@ -17,8 +17,11 @@ Three synthesis levels, bottom-up:
 Cache key at each level = SHA256(sorted representation of inputs), so unchanged
 modules reuse their cached description and only changed modules incur LLM calls.
 
-Prompt caching (Anthropic ephemeral cache) is applied to the system prompt to
-reduce cost on repeated calls within a single run.
+Provider support:
+  anthropic         — Anthropic SDK，系统提示启用 prompt caching 降低成本
+  openai            — OpenAI SDK，支持 GPT-4o 等模型
+  openai-compatible — OpenAI SDK + 自定义 base_url，适配 GLM / DeepSeek /
+                      Qwen / Ollama 等任何兼容 OpenAI 接口的服务
 """
 
 from __future__ import annotations
@@ -27,10 +30,31 @@ import os
 import re
 from typing import Any
 
-import anthropic
-
 from .cache import Cache
 from .config import LLMConfig
+
+# ---------------------------------------------------------------------------
+# Lazy provider imports — only imported when actually used
+# ---------------------------------------------------------------------------
+
+def _import_anthropic():
+    try:
+        import anthropic
+        return anthropic
+    except ImportError:
+        raise ImportError(
+            "Anthropic SDK 未安装，请运行: pip install anthropic"
+        )
+
+def _import_openai():
+    try:
+        import openai
+        return openai
+    except ImportError:
+        raise ImportError(
+            "OpenAI SDK 未安装，请运行: pip install openai\n"
+            "GLM / DeepSeek / Qwen / Ollama 等 OpenAI 兼容服务同样需要此依赖。"
+        )
 
 # ---------------------------------------------------------------------------
 # System prompts (cached via Anthropic prompt caching)
@@ -236,27 +260,56 @@ class Synthesizer:
         self.total_output_tokens = 0
 
     @staticmethod
-    def _build_client(llm: LLMConfig) -> anthropic.Anthropic:
-        """Resolve API key and return an Anthropic client.
+    def _build_client(llm: LLMConfig) -> Any:
+        """Resolve API key and return the appropriate LLM client.
 
-        Priority:
-          1. synth.toml [llm] api_key
-          2. ANTHROPIC_API_KEY environment variable
-
-        Raises a clear ValueError if neither is available.
+        Provider   SDK        Key env var
+        ---------  ---------  --------------------------
+        anthropic  anthropic  ANTHROPIC_API_KEY
+        openai     openai     OPENAI_API_KEY
+        openai-compatible  openai  OPENAI_API_KEY (fallback)
         """
-        api_key = llm.api_key or os.environ.get("ANTHROPIC_API_KEY", "")
-        if not api_key:
-            raise ValueError(
-                "未找到 Anthropic API Key。请通过以下任意方式提供：\n"
-                "  方式 1 — 环境变量（推荐）:\n"
-                "    export ANTHROPIC_API_KEY=sk-ant-...\n"
-                "  方式 2 — 写入 synth.toml:\n"
-                "    [llm]\n"
-                "    api_key = \"sk-ant-...\"\n"
-                "申请 API Key: https://console.anthropic.com/settings/keys"
-            )
-        return anthropic.Anthropic(api_key=api_key)
+        provider = llm.provider
+
+        if provider == "anthropic":
+            anthropic = _import_anthropic()
+            api_key = llm.api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+            if not api_key:
+                raise ValueError(
+                    "未找到 Anthropic API Key。请通过以下任意方式提供：\n"
+                    "  方式 1 — 环境变量:  export ANTHROPIC_API_KEY=sk-ant-...\n"
+                    "  方式 2 — synth.toml: [llm]\n"
+                    "                       api_key = \"sk-ant-...\"\n"
+                    "申请地址: https://console.anthropic.com/settings/keys"
+                )
+            return anthropic.Anthropic(api_key=api_key)
+
+        elif provider in ("openai", "openai-compatible"):
+            openai = _import_openai()
+            api_key = llm.api_key or os.environ.get("OPENAI_API_KEY", "")
+            if not api_key:
+                env_hint = "OPENAI_API_KEY" if provider == "openai" else "OPENAI_API_KEY（或在 synth.toml 中设置 api_key）"
+                raise ValueError(
+                    f"未找到 API Key（provider={provider}）。请提供：\n"
+                    f"  环境变量: export {env_hint}=your-key\n"
+                    f"  或 synth.toml: [llm]\n"
+                    f"                  api_key = \"your-key\""
+                )
+            kwargs: dict[str, Any] = {"api_key": api_key}
+            if provider == "openai-compatible":
+                if not llm.base_url:
+                    raise ValueError(
+                        "provider = \"openai-compatible\" 必须同时设置 base_url，例如：\n"
+                        "  [llm]\n"
+                        "  base_url = \"https://open.bigmodel.cn/api/paas/v4/\"   # GLM\n"
+                        "  base_url = \"https://api.deepseek.com/v1\"             # DeepSeek\n"
+                        "  base_url = \"http://localhost:11434/v1\"               # Ollama"
+                    )
+                kwargs["base_url"] = llm.base_url
+            return openai.OpenAI(**kwargs)
+
+        else:
+            raise ValueError(f"未知 provider: {provider!r}")
 
     # ------------------------------------------------------------------
     # Level 1: Module
@@ -391,10 +444,17 @@ class Synthesizer:
         return result
 
     # ------------------------------------------------------------------
-    # LLM call
+    # LLM call — dispatches by provider
     # ------------------------------------------------------------------
 
     def _call(self, user_prompt: str) -> str:
+        if self.llm.provider == "anthropic":
+            return self._call_anthropic(user_prompt)
+        else:
+            return self._call_openai(user_prompt)
+
+    def _call_anthropic(self, user_prompt: str) -> str:
+        """Anthropic SDK call with prompt caching on the system prompt."""
         response = self._client.messages.create(
             model=self.llm.model,
             max_tokens=self.llm.max_tokens,
@@ -411,6 +471,22 @@ class Synthesizer:
         self.total_input_tokens += usage.input_tokens
         self.total_output_tokens += usage.output_tokens
         return response.content[0].text
+
+    def _call_openai(self, user_prompt: str) -> str:
+        """OpenAI-compatible SDK call (openai / openai-compatible providers)."""
+        response = self._client.chat.completions.create(
+            model=self.llm.model,
+            max_tokens=self.llm.max_tokens,
+            messages=[
+                {"role": "system", "content": self._system},
+                {"role": "user",   "content": user_prompt},
+            ],
+        )
+        usage = response.usage
+        if usage:
+            self.total_input_tokens  += usage.prompt_tokens
+            self.total_output_tokens += usage.completion_tokens
+        return response.choices[0].message.content or ""
 
 
 # ---------------------------------------------------------------------------
