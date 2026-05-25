@@ -2,7 +2,7 @@
 # install.sh — Synth 安装脚本
 #
 # 用法:
-#   ./install.sh              # 在 .venv/ 中安装（含 Leiden 社区检测）
+#   ./install.sh              # 安装全部依赖（含 Leiden 社区检测）
 #   ./install.sh --no-leiden  # 仅安装核心依赖，跳过 graspologic
 #   ./install.sh --help
 
@@ -74,39 +74,38 @@ if [ -z "$PYTHON" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# 创建虚拟环境
+# 检测是否为外部托管的 Python（Homebrew 等，需要 --break-system-packages）
 # ---------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-VENV_DIR="$SCRIPT_DIR/.venv"
-
-step "创建虚拟环境 (.venv/)"
-
-if [ -d "$VENV_DIR" ]; then
-    warn ".venv/ 已存在，复用现有虚拟环境"
-    warn "如需全新安装，请先删除: rm -rf .venv/"
-else
-    "$PYTHON" -m venv "$VENV_DIR"
-    ok "虚拟环境已创建: $VENV_DIR"
+PIP_FLAGS=""
+EXTERNALLY_MANAGED=$("$PYTHON" -c "
+import sysconfig, os
+marker = os.path.join(sysconfig.get_path('stdlib'), 'EXTERNALLY-MANAGED')
+print('yes' if os.path.exists(marker) else 'no')
+")
+if [ "$EXTERNALLY_MANAGED" = "yes" ]; then
+    PIP_FLAGS="--break-system-packages"
+    warn "检测到外部托管的 Python（如 Homebrew），将使用 --break-system-packages 安装"
 fi
 
-# 后续所有操作都使用 venv 内的 Python / pip
-PY="$VENV_DIR/bin/python"
-PIP="$VENV_DIR/bin/pip"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ---------------------------------------------------------------------------
 # 升级 pip / setuptools
 # ---------------------------------------------------------------------------
 step "升级 pip / setuptools"
 
-"$PIP" install --upgrade pip -q      && ok "pip 已升级"       || warn "pip 升级失败，继续使用当前版本"
-"$PIP" install --upgrade setuptools -q && ok "setuptools 已升级" || warn "setuptools 升级失败，继续使用当前版本"
+# shellcheck disable=SC2086
+"$PYTHON" -m pip install --upgrade pip $PIP_FLAGS -q      && ok "pip 已升级"        || warn "pip 升级失败，继续使用当前版本"
+# shellcheck disable=SC2086
+"$PYTHON" -m pip install --upgrade setuptools $PIP_FLAGS -q && ok "setuptools 已升级" || warn "setuptools 升级失败，继续使用当前版本"
 
 # ---------------------------------------------------------------------------
 # 安装 Synth 核心依赖
 # ---------------------------------------------------------------------------
 step "安装 Synth 核心依赖"
 
-"$PIP" install -e "$SCRIPT_DIR" -q
+# shellcheck disable=SC2086
+"$PYTHON" -m pip install -e "$SCRIPT_DIR" $PIP_FLAGS -q
 ok "Synth 核心依赖安装完成"
 
 # ---------------------------------------------------------------------------
@@ -116,11 +115,12 @@ if [ "$LEIDEN" = true ]; then
     step "安装 graspologic（Leiden 社区检测）"
     echo "  graspologic 依赖 scipy / numpy / scikit-learn，首次安装可能需要几分钟..."
 
-    if "$PIP" install -e "$SCRIPT_DIR[leiden]" -q; then
+    # shellcheck disable=SC2086
+    if "$PYTHON" -m pip install -e "$SCRIPT_DIR[leiden]" $PIP_FLAGS -q; then
         ok "graspologic 安装完成，Leiden 算法已启用"
     else
         warn "graspologic 安装失败，将回退到 Louvain 算法（功能不受影响）"
-        warn "如需手动安装: $PIP install graspologic>=3.0"
+        warn "如需手动安装: $PYTHON -m pip install graspologic>=3.0 $PIP_FLAGS"
     fi
 else
     warn "已跳过 graspologic 安装（--no-leiden），社区检测将使用 Louvain 算法"
@@ -131,7 +131,7 @@ fi
 # ---------------------------------------------------------------------------
 step "验证安装"
 
-if ! "$PY" -m synth --help &>/dev/null; then
+if ! "$PYTHON" -m synth --help &>/dev/null; then
     err "synth CLI 验证失败，请检查上方错误信息"
     exit 1
 fi
@@ -139,7 +139,7 @@ ok "synth CLI 可用"
 
 MODULES=("anthropic" "networkx" "typer" "rich")
 for mod in "${MODULES[@]}"; do
-    if "$PY" -c "import $mod" 2>/dev/null; then
+    if "$PYTHON" -c "import $mod" 2>/dev/null; then
         ok "$mod"
     else
         err "$mod 导入失败"
@@ -147,7 +147,7 @@ for mod in "${MODULES[@]}"; do
     fi
 done
 
-if "$PY" -c "from graspologic.partition import leiden" 2>/dev/null; then
+if "$PYTHON" -c "from graspologic.partition import leiden" 2>/dev/null; then
     ok "graspologic (leiden) ✓ — 将使用 Leiden 社区检测算法"
 else
     warn "graspologic 不可用 — 将回退到 Louvain 算法"
@@ -158,12 +158,6 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 echo -e "${BOLD}${GREEN}✓ 安装完成！${RESET}"
-echo ""
-echo "激活虚拟环境："
-echo "  source .venv/bin/activate"
-echo ""
-echo "或直接使用 venv 内的命令（无需激活）："
-echo "  .venv/bin/synth --help"
 echo ""
 echo "下一步："
 echo "  1. 设置 API Key:  export ANTHROPIC_API_KEY=sk-..."
