@@ -16,6 +16,7 @@ dependencies = [
 
 [project.optional-dependencies]
 leiden = ["graspologic>=3.0"]
+dev = ["pytest>=8.0", "pytest-mock>=3.0"]
 
 [project.scripts]
 synth = "synth.__main__:app"
@@ -23,3 +24,7 @@ synth = "synth.__main__:app"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["synth*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-v"

@@ -36,7 +36,7 @@ class RepoConfig:
 @dataclass
 class OutputConfig:
     language: Literal["zh", "en"] = "zh"
-    format: Literal["markdown", "json"] = "markdown"
+    format: Literal["markdown", "json", "both"] = "markdown"
     dir: Path = Path("synth-out")
 
 
