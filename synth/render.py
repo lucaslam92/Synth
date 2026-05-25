@@ -125,7 +125,8 @@ def _render_markdown(result: dict[str, Any], language: str) -> str:
         ]
 
         # Repo-level description
-        repo_desc = repo_descs.get(repo_name, "")
+        repo_desc_raw = repo_descs.get(repo_name, "")
+        repo_desc = repo_desc_raw.get("text", "") if isinstance(repo_desc_raw, dict) else repo_desc_raw
         if repo_desc:
             lines += [repo_desc, ""]
 
@@ -146,7 +147,8 @@ def _render_markdown(result: dict[str, Any], language: str) -> str:
                     f"| {'社区ID' if zh else 'Community'}: `{cid}`",
                     "",
                 ]
-                mod_desc = module_descs.get(cid, "")
+                mod_desc_raw = module_descs.get(cid, "")
+                mod_desc = mod_desc_raw.get("text", "") if isinstance(mod_desc_raw, dict) else mod_desc_raw
                 if mod_desc:
                     lines += [mod_desc, ""]
                 else:
@@ -184,8 +186,9 @@ def _render_markdown(result: dict[str, Any], language: str) -> str:
                 "",
             ]
 
-            if desc:
-                lines += [desc, ""]
+            feat_desc = desc.get("text", "") if isinstance(desc, dict) else desc
+            if feat_desc:
+                lines += [feat_desc, ""]
             else:
                 lines += [
                     f"*{'（描述生成失败）' if zh else '(description unavailable)'}*",

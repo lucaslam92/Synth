@@ -1,0 +1,26 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+
+# Build / dist
+build/
+dist/
+*.egg-info/
+*.egg
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Synth runtime artifacts
+.synth-cache/
+synth-out/
+
+# IDE / OS
+.DS_Store
+.vscode/
+.idea/

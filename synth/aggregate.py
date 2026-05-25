@@ -141,10 +141,12 @@ def build_hierarchy(
         for nid in node_ids[:60]:
             d = merged_graph.nodes[nid]
             node_summaries.append({
+                "id": nid,
                 "label": d.get("label", ""),
                 "file_type": d.get("file_type", ""),
                 "source_file": d.get("source_file", ""),
                 "line": d.get("line_number", 0),
+                "snippet": d.get("snippet", ""),
             })
 
         # Internal edges (same community, not cross-repo, cap 80)
@@ -256,14 +258,6 @@ def _find_feature_groups(
     comm_graph: nx.Graph = nx.Graph()
     comm_graph.add_nodes_from(communities.keys())
 
-    for _, _, edata in merged_graph.edges(data=True):
-        if not edata.get("cross_repo", False):
-            continue
-        src_comm = node_to_comm_key.get(edata.get("source", ""))  # may be missing
-        tgt_comm = node_to_comm_key.get(edata.get("target", ""))
-
-        # Also scan by endpoint lookup from the merged graph edge list
-    # Re-do properly by iterating actual edge endpoints
     for src_nid, tgt_nid, edata in merged_graph.edges(data=True):
         if not edata.get("cross_repo", False):
             continue

@@ -124,7 +124,8 @@ def run(
             )
 
         # --- Step 4: Synthesize modules ---
-        module_descriptions: dict[str, str] = {}
+        # Values are {"text": str, "code_map": dict}
+        module_descriptions: dict[str, dict] = {}
         total_mods = len(communities)
         mod_task = progress.add_task(f"生成模块描述 (0/{total_mods})…", total=total_mods)
 
@@ -137,7 +138,7 @@ def run(
             module_descriptions[cid] = synth.synthesize_module(comm)
 
         # --- Step 5: Synthesize repos ---
-        repo_descriptions: dict[str, str] = {}
+        repo_descriptions: dict[str, dict] = {}
         repo_task = progress.add_task(f"生成服务描述 (0/{len(repos_map)})…", total=len(repos_map))
 
         for i, (repo_name, repo_info) in enumerate(repos_map.items(), 1):
@@ -146,8 +147,9 @@ def run(
                 description=f"生成服务描述 ({i}/{len(repos_map)}): {repo_name}",
                 advance=1,
             )
+            # Pass plain text to repo synthesis — it summarises module texts
             repo_module_descs = {
-                cid: module_descriptions[cid]
+                cid: module_descriptions[cid]["text"]
                 for cid in repo_info["community_ids"]
                 if cid in module_descriptions
             }
@@ -160,13 +162,15 @@ def run(
                 f"生成跨服务功能描述 (0/{len(feature_groups)})…",
                 total=len(feature_groups),
             )
+            # Plain-text view of module descriptions for feature synthesis
+            module_texts = {cid: d["text"] for cid, d in module_descriptions.items()}
             for i, fg in enumerate(feature_groups, 1):
                 progress.update(
                     feat_task,
                     description=f"生成跨服务功能描述 ({i}/{len(feature_groups)})",
                     advance=1,
                 )
-                desc = synth.synthesize_feature(fg, communities, module_descriptions)
+                desc = synth.synthesize_feature(fg, communities, module_texts)
                 feature_descriptions.append({
                     "community_ids": fg["community_ids"],
                     "repos": fg["repos"],
@@ -177,10 +181,7 @@ def run(
         progress.update(task, description="写入输出文件…")
         result = {
             "repos": repos_map,
-            "communities": {
-                cid: {k: v for k, v in c.items() if k != "node_ids"}
-                for cid, c in communities.items()
-            },
+            "communities": dict(communities),  # node_ids kept for downstream use
             "repo_descriptions": repo_descriptions,
             "module_descriptions": module_descriptions,
             "feature_descriptions": feature_descriptions,

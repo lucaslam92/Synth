@@ -23,6 +23,7 @@ reduce cost on repeated calls within a single run.
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import anthropic
@@ -237,12 +238,20 @@ class Synthesizer:
     # Level 1: Module
     # ------------------------------------------------------------------
 
-    def synthesize_module(self, community: dict[str, Any]) -> str:
-        """Generate description for a single community/module."""
+    def synthesize_module(self, community: dict[str, Any]) -> dict[str, Any]:
+        """Generate description for a single community/module.
+
+        Returns {"text": str, "code_map": dict} where code_map links each
+        described feature/entity to its source code location and snippet.
+        """
         cache_key = _module_cache_key(community)
         cached = self.cache.get("modules", cache_key)
         if cached:
-            return cached["description"]
+            if "text" in cached:
+                return cached
+            # migrate old cache format
+            if "description" in cached:
+                return {"text": cached["description"], "code_map": {}}
 
         nodes_text = _format_nodes(community["nodes"])
         edges_text = _format_edges(community["internal_edges"]) or (
@@ -257,9 +266,11 @@ class Synthesizer:
             edges=edges_text,
         )
 
-        desc = self._call(prompt)
-        self.cache.set("modules", cache_key, {"description": desc})
-        return desc
+        text = self._call(prompt)
+        code_map = _build_code_map(text, community["nodes"])
+        result = {"text": text, "code_map": code_map}
+        self.cache.set("modules", cache_key, result)
+        return result
 
     # ------------------------------------------------------------------
     # Level 2: Repository
@@ -269,15 +280,22 @@ class Synthesizer:
         self,
         repo_name: str,
         module_descriptions: dict[str, str],
-    ) -> str:
-        """Generate repo-level description from all its module descriptions."""
+    ) -> dict[str, Any]:
+        """Generate repo-level description from all its module descriptions.
+
+        module_descriptions values must be plain text strings (extract .text
+        from synthesize_module results before calling).
+        """
         cache_key = {
             "repo": repo_name,
             "modules": sorted(module_descriptions.items()),
         }
         cached = self.cache.get("repos", cache_key)
         if cached:
-            return cached["description"]
+            if "text" in cached:
+                return cached
+            if "description" in cached:
+                return {"text": cached["description"], "code_map": {}}
 
         sep = "\n\n---\n\n"
         mod_text = sep.join(
@@ -290,9 +308,10 @@ class Synthesizer:
             module_descriptions=mod_text,
         )
 
-        desc = self._call(prompt)
-        self.cache.set("repos", cache_key, {"description": desc})
-        return desc
+        text = self._call(prompt)
+        result = {"text": text, "code_map": {}}
+        self.cache.set("repos", cache_key, result)
+        return result
 
     # ------------------------------------------------------------------
     # Level 3: Cross-repo feature
@@ -303,8 +322,11 @@ class Synthesizer:
         feature_group: dict[str, Any],
         communities: dict[str, dict[str, Any]],
         module_descriptions: dict[str, str],
-    ) -> str:
-        """Generate end-to-end cross-repo feature description."""
+    ) -> dict[str, Any]:
+        """Generate end-to-end cross-repo feature description.
+
+        module_descriptions values must be plain text strings.
+        """
         comm_ids = feature_group["community_ids"]
         cache_key = {
             "community_ids": sorted(comm_ids),
@@ -315,7 +337,10 @@ class Synthesizer:
         }
         cached = self.cache.get("features", cache_key)
         if cached:
-            return cached["description"]
+            if "text" in cached:
+                return cached
+            if "description" in cached:
+                return {"text": cached["description"], "code_map": {}}
 
         sep = "\n\n---\n\n"
         mod_text = sep.join(
@@ -325,7 +350,6 @@ class Synthesizer:
             if cid in communities
         )
 
-        # Collect relevant cross-repo edges
         all_cross: list[dict] = []
         for cid in comm_ids:
             if cid in communities:
@@ -337,9 +361,10 @@ class Synthesizer:
             cross_edges=cross_text,
         )
 
-        desc = self._call(prompt)
-        self.cache.set("features", cache_key, {"description": desc})
-        return desc
+        text = self._call(prompt)
+        result = {"text": text, "code_map": {}}
+        self.cache.set("features", cache_key, result)
+        return result
 
     # ------------------------------------------------------------------
     # LLM call
@@ -416,3 +441,80 @@ def _format_cross_edges(edges: list[dict], lang: str) -> str:
             seen.add(key)
             lines.append(f"  - {key}")
     return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# code_map building
+# ---------------------------------------------------------------------------
+
+# Minimum label length to avoid matching noise words ("id", "db", etc.)
+_MIN_LABEL_LEN = 4
+
+# Section headers that introduce entity names (used to extract entity keys)
+_ENTITY_SECTION_RE = re.compile(
+    r"(?:\*\*关键实体说明\*\*|\*\*Key Entity Descriptions?\*\*)[^\n]*\n(.*?)(?=\n\*\*|\Z)",
+    re.S,
+)
+_BULLET_RE = re.compile(r"^[-*]\s+(.+)$", re.MULTILINE)
+# Backtick or bold entity name at the start of a bullet or line
+_ENTITY_NAME_RE = re.compile(r"(?:^|\n)[^`\n]*`([A-Za-z][A-Za-z0-9_]{3,})`|"
+                              r"(?:^|\n)\s*[-*]\s*\*\*([A-Za-z][A-Za-z0-9_]{3,})\*\*")
+
+
+def _build_code_map(text: str, nodes: list[dict]) -> dict[str, list[dict]]:
+    """Map description phrases → code locations.
+
+    Keys are bullet-point texts and entity names extracted from the description.
+    Values are lists of matching node references {node_id, file, line, snippet}.
+    Nodes with no source_file are excluded.
+    """
+    # Label → node lookup (only nodes that have a source file)
+    label_index: dict[str, dict] = {
+        n["label"]: n for n in nodes
+        if n.get("label") and n.get("source_file") and len(n["label"]) >= _MIN_LABEL_LEN
+    }
+    if not label_index:
+        return {}
+
+    code_map: dict[str, list[dict]] = {}
+
+    # 1. Bullet points: each bullet becomes a key; find any node labels inside it
+    for m in _BULLET_RE.finditer(text):
+        bullet = m.group(1).strip()
+        refs = _nodes_mentioned_in(bullet, label_index)
+        if refs:
+            code_map[bullet] = refs
+
+    # 2. Entity names: extract from backtick / bold tokens anywhere in the text
+    for m in _ENTITY_NAME_RE.finditer(text):
+        entity = m.group(1) or m.group(2)
+        if entity and entity in label_index:
+            ref = _node_ref(label_index[entity])
+            existing = code_map.setdefault(entity, [])
+            if ref not in existing:
+                existing.append(ref)
+
+    return code_map
+
+
+def _nodes_mentioned_in(text: str, label_index: dict[str, dict]) -> list[dict]:
+    """Return refs for every label that appears as a substring of text."""
+    seen_ids: set[str] = set()
+    refs: list[dict] = []
+    for label, node in label_index.items():
+        if label in text:
+            ref = _node_ref(node)
+            key = ref["node_id"]
+            if key not in seen_ids:
+                seen_ids.add(key)
+                refs.append(ref)
+    return refs
+
+
+def _node_ref(node: dict) -> dict:
+    return {
+        "node_id": node.get("id", node.get("label", "")),
+        "file": node.get("source_file", ""),
+        "line": node.get("line", 0),
+        "snippet": node.get("snippet", ""),
+    }
