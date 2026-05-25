@@ -2,7 +2,7 @@
 # install.sh — Synth 安装脚本
 #
 # 用法:
-#   ./install.sh              # 安装全部依赖（含 Leiden 社区检测）
+#   ./install.sh              # 在 .venv/ 中安装（含 Leiden 社区检测）
 #   ./install.sh --no-leiden  # 仅安装核心依赖，跳过 graspologic
 #   ./install.sh --help
 
@@ -52,7 +52,7 @@ done
 step "检查 Python 版本"
 
 PYTHON=""
-for cmd in python3 python; do
+for cmd in python3.13 python3.12 python3.11 python3.10 python3 python; do
     if command -v "$cmd" &>/dev/null; then
         ver=$("$cmd" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
         major=$(echo "$ver" | cut -d. -f1)
@@ -69,52 +69,58 @@ done
 
 if [ -z "$PYTHON" ]; then
     err "未找到 Python 3.10+，请先安装: https://www.python.org/downloads/"
+    err "macOS 用户可运行: brew install python@3.13"
     exit 1
 fi
 
 # ---------------------------------------------------------------------------
-# 检查 pip
+# 创建虚拟环境
 # ---------------------------------------------------------------------------
-step "检查 pip"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+VENV_DIR="$SCRIPT_DIR/.venv"
 
-if ! "$PYTHON" -m pip --version &>/dev/null; then
-    err "pip 不可用，请先安装: $PYTHON -m ensurepip"
-    exit 1
+step "创建虚拟环境 (.venv/)"
+
+if [ -d "$VENV_DIR" ]; then
+    warn ".venv/ 已存在，复用现有虚拟环境"
+    warn "如需全新安装，请先删除: rm -rf .venv/"
+else
+    "$PYTHON" -m venv "$VENV_DIR"
+    ok "虚拟环境已创建: $VENV_DIR"
 fi
 
-ok "pip 可用: $($PYTHON -m pip --version)"
+# 后续所有操作都使用 venv 内的 Python / pip
+PY="$VENV_DIR/bin/python"
+PIP="$VENV_DIR/bin/pip"
 
 # ---------------------------------------------------------------------------
-# 升级 pip 和 setuptools
+# 升级 pip / setuptools
 # ---------------------------------------------------------------------------
 step "升级 pip / setuptools"
 
-# 逐个升级：wheel 在部分系统（Debian/Ubuntu）由系统包管理器管理，跳过即可
-"$PYTHON" -m pip install --upgrade pip -q && ok "pip 已升级" || warn "pip 升级失败，继续使用当前版本"
-"$PYTHON" -m pip install --upgrade setuptools -q && ok "setuptools 已升级" || warn "setuptools 升级失败，继续使用当前版本"
+"$PIP" install --upgrade pip -q      && ok "pip 已升级"       || warn "pip 升级失败，继续使用当前版本"
+"$PIP" install --upgrade setuptools -q && ok "setuptools 已升级" || warn "setuptools 升级失败，继续使用当前版本"
 
 # ---------------------------------------------------------------------------
-# 安装 Synth
+# 安装 Synth 核心依赖
 # ---------------------------------------------------------------------------
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-
 step "安装 Synth 核心依赖"
 
-"$PYTHON" -m pip install -e "$SCRIPT_DIR" -q
+"$PIP" install -e "$SCRIPT_DIR" -q
 ok "Synth 核心依赖安装完成"
 
 # ---------------------------------------------------------------------------
-# 安装 graspologic（Leiden 社区检测）
+# 安装 graspologic（Leiden 社区检测，可选）
 # ---------------------------------------------------------------------------
 if [ "$LEIDEN" = true ]; then
     step "安装 graspologic（Leiden 社区检测）"
     echo "  graspologic 依赖 scipy / numpy / scikit-learn，首次安装可能需要几分钟..."
 
-    if "$PYTHON" -m pip install -e "$SCRIPT_DIR[leiden]" -q; then
+    if "$PIP" install -e "$SCRIPT_DIR[leiden]" -q; then
         ok "graspologic 安装完成，Leiden 算法已启用"
     else
         warn "graspologic 安装失败，将回退到 Louvain 算法（功能不受影响）"
-        warn "如需手动安装: pip install graspologic>=3.0"
+        warn "如需手动安装: $PIP install graspologic>=3.0"
     fi
 else
     warn "已跳过 graspologic 安装（--no-leiden），社区检测将使用 Louvain 算法"
@@ -125,17 +131,15 @@ fi
 # ---------------------------------------------------------------------------
 step "验证安装"
 
-if ! "$PYTHON" -m synth --help &>/dev/null; then
+if ! "$PY" -m synth --help &>/dev/null; then
     err "synth CLI 验证失败，请检查上方错误信息"
     exit 1
 fi
-
 ok "synth CLI 可用"
 
-# 检查各核心模块是否可导入
 MODULES=("anthropic" "networkx" "typer" "rich")
 for mod in "${MODULES[@]}"; do
-    if "$PYTHON" -c "import $mod" 2>/dev/null; then
+    if "$PY" -c "import $mod" 2>/dev/null; then
         ok "$mod"
     else
         err "$mod 导入失败"
@@ -143,8 +147,7 @@ for mod in "${MODULES[@]}"; do
     fi
 done
 
-# 检查 Leiden（可选）
-if "$PYTHON" -c "from graspologic.partition import leiden" 2>/dev/null; then
+if "$PY" -c "from graspologic.partition import leiden" 2>/dev/null; then
     ok "graspologic (leiden) ✓ — 将使用 Leiden 社区检测算法"
 else
     warn "graspologic 不可用 — 将回退到 Louvain 算法"
@@ -155,6 +158,12 @@ fi
 # ---------------------------------------------------------------------------
 echo ""
 echo -e "${BOLD}${GREEN}✓ 安装完成！${RESET}"
+echo ""
+echo "激活虚拟环境："
+echo "  source .venv/bin/activate"
+echo ""
+echo "或直接使用 venv 内的命令（无需激活）："
+echo "  .venv/bin/synth --help"
 echo ""
 echo "下一步："
 echo "  1. 设置 API Key:  export ANTHROPIC_API_KEY=sk-..."
