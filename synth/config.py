@@ -50,6 +50,9 @@ class CacheConfig:
 class LLMConfig:
     model: str = "claude-opus-4-6"
     max_tokens: int = 2048
+    # API Key 优先级：synth.toml [llm] api_key > ANTHROPIC_API_KEY 环境变量
+    # 留空则自动从环境变量读取
+    api_key: str = ""
 
 
 @dataclass
@@ -104,6 +107,7 @@ def load_config(path: Path = Path("synth.toml")) -> SynthConfig:
     llm_cfg = LLMConfig(
         model=llm.get("model", "claude-opus-4-6"),
         max_tokens=llm.get("max_tokens", 2048),
+        api_key=llm.get("api_key", ""),
     )
 
     return SynthConfig(repos=repos, output=output, cache=cache, llm=llm_cfg)

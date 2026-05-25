@@ -23,6 +23,7 @@ reduce cost on repeated calls within a single run.
 
 from __future__ import annotations
 
+import os
 import re
 from typing import Any
 
@@ -229,10 +230,33 @@ class Synthesizer:
         self.llm = llm
         self.cache = cache
         self.lang = language if language in ("zh", "en") else "zh"
-        self._client = anthropic.Anthropic()
+        self._client = self._build_client(llm)
         self._system = _SYSTEM[self.lang]
         self.total_input_tokens = 0
         self.total_output_tokens = 0
+
+    @staticmethod
+    def _build_client(llm: LLMConfig) -> anthropic.Anthropic:
+        """Resolve API key and return an Anthropic client.
+
+        Priority:
+          1. synth.toml [llm] api_key
+          2. ANTHROPIC_API_KEY environment variable
+
+        Raises a clear ValueError if neither is available.
+        """
+        api_key = llm.api_key or os.environ.get("ANTHROPIC_API_KEY", "")
+        if not api_key:
+            raise ValueError(
+                "未找到 Anthropic API Key。请通过以下任意方式提供：\n"
+                "  方式 1 — 环境变量（推荐）:\n"
+                "    export ANTHROPIC_API_KEY=sk-ant-...\n"
+                "  方式 2 — 写入 synth.toml:\n"
+                "    [llm]\n"
+                "    api_key = \"sk-ant-...\"\n"
+                "申请 API Key: https://console.anthropic.com/settings/keys"
+            )
+        return anthropic.Anthropic(api_key=api_key)
 
     # ------------------------------------------------------------------
     # Level 1: Module

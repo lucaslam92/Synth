@@ -24,7 +24,7 @@ from synth.synthesize import (
 
 @pytest.fixture
 def llm_cfg() -> LLMConfig:
-    return LLMConfig(model="claude-haiku-4-5-20251001", max_tokens=512)
+    return LLMConfig(model="claude-haiku-4-5-20251001", max_tokens=512, api_key="sk-test-fake")
 
 
 @pytest.fixture
@@ -278,24 +278,44 @@ class TestSynthesizerFeatureLevel:
         assert synth._client.messages.create.call_count == 1
 
 
+class TestSynthesizerAPIKey:
+    def test_missing_key_raises_clear_error(self, cache: Cache) -> None:
+        cfg = LLMConfig(model="claude-opus-4-6", max_tokens=512, api_key="")
+        with pytest.MonkeyPatch().context() as mp:
+            mp.delenv("ANTHROPIC_API_KEY", raising=False)
+            with pytest.raises(ValueError, match="API Key"):
+                Synthesizer(cfg, cache)
+
+    def test_config_key_takes_priority_over_env(self, cache: Cache) -> None:
+        cfg = LLMConfig(model="claude-opus-4-6", max_tokens=512, api_key="sk-from-config")
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setenv("ANTHROPIC_API_KEY", "sk-from-env")
+            s = Synthesizer(cfg, cache)
+        assert s._client.api_key == "sk-from-config"
+
+    def test_env_key_used_when_config_empty(self, cache: Cache) -> None:
+        cfg = LLMConfig(model="claude-opus-4-6", max_tokens=512, api_key="")
+        with pytest.MonkeyPatch().context() as mp:
+            mp.setenv("ANTHROPIC_API_KEY", "sk-from-env")
+            s = Synthesizer(cfg, cache)
+        assert s._client.api_key == "sk-from-env"
+
+
 class TestSynthesizerLanguage:
     def test_zh_uses_chinese_system_prompt(
         self, llm_cfg: LLMConfig, cache: Cache
     ) -> None:
-        with patch("synth.synthesize.anthropic.Anthropic"):
-            s = Synthesizer(llm_cfg, cache, language="zh")
+        s = Synthesizer(llm_cfg, cache, language="zh")
         assert "中文" in s._system
 
     def test_en_uses_english_system_prompt(
         self, llm_cfg: LLMConfig, cache: Cache
     ) -> None:
-        with patch("synth.synthesize.anthropic.Anthropic"):
-            s = Synthesizer(llm_cfg, cache, language="en")
+        s = Synthesizer(llm_cfg, cache, language="en")
         assert "English" in s._system
 
     def test_invalid_language_falls_back_to_zh(
         self, llm_cfg: LLMConfig, cache: Cache
     ) -> None:
-        with patch("synth.synthesize.anthropic.Anthropic"):
-            s = Synthesizer(llm_cfg, cache, language="fr")
+        s = Synthesizer(llm_cfg, cache, language="fr")
         assert s.lang == "zh"
