@@ -16,9 +16,10 @@ dist/
 venv/
 env/
 
-# Synth runtime artifacts
+# Runtime artifacts
 .synth-cache/
 synth-out/
+graphify-out/
 
 # IDE / OS
 .DS_Store

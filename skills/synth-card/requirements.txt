@@ -1,0 +1,3 @@
+# synth-card skill 依赖
+# 仅 graph-build 子命令需要此包，graph-list / card-data 只用标准库
+graphifyy>=0.8.0

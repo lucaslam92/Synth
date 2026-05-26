@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# install.sh — Synth 安装脚本
+# install.sh — 安装 synth-card skill 到 Claude Code
 #
 # 用法:
-#   ./install.sh              # 安装全部依赖（含 Leiden 社区检测）
-#   ./install.sh --no-leiden  # 仅安装核心依赖，跳过 graspologic
+#   ./install.sh            # 安装 skill（含依赖检查）
+#   ./install.sh --no-dep   # 跳过 pip 依赖安装
+#   ./install.sh --uninstall
 #   ./install.sh --help
 
 set -euo pipefail
@@ -25,156 +26,107 @@ step() { echo -e "\n${BOLD}▶ $*${RESET}"; }
 # ---------------------------------------------------------------------------
 # 参数解析
 # ---------------------------------------------------------------------------
-LEIDEN=true
+INSTALL_DEP=true
+UNINSTALL=false
 
 for arg in "$@"; do
-    case "$arg" in
-        --no-leiden) LEIDEN=false ;;
-        --help|-h)
-            echo "用法: ./install.sh [--no-leiden]"
-            echo ""
-            echo "选项:"
-            echo "  --no-leiden   跳过 graspologic 安装（不支持 Leiden 社区检测，回退到 Louvain）"
-            echo "  --help        显示此帮助"
-            exit 0
-            ;;
-        *)
-            err "未知参数: $arg"
-            echo "运行 ./install.sh --help 查看用法"
-            exit 1
-            ;;
-    esac
+  case "$arg" in
+    --no-dep)     INSTALL_DEP=false ;;
+    --uninstall)  UNINSTALL=true ;;
+    --help|-h)
+      echo "用法: ./install.sh [--no-dep] [--uninstall]"
+      echo ""
+      echo "  --no-dep     跳过 pip 依赖安装（graphifyy）"
+      echo "  --uninstall  移除已安装的 skill"
+      exit 0
+      ;;
+    *) err "未知参数: $arg"; exit 1 ;;
+  esac
 done
 
 # ---------------------------------------------------------------------------
-# 检查 Python 版本（需要 >= 3.10）
+# 确定 skill 安装目录
 # ---------------------------------------------------------------------------
-step "检查 Python 版本"
-
-PYTHON=""
-for cmd in python3.13 python3.12 python3.11 python3.10 python3 python; do
-    if command -v "$cmd" &>/dev/null; then
-        ver=$("$cmd" -c 'import sys; print(f"{sys.version_info.major}.{sys.version_info.minor}")')
-        major=$(echo "$ver" | cut -d. -f1)
-        minor=$(echo "$ver" | cut -d. -f2)
-        if [ "$major" -ge 3 ] && [ "$minor" -ge 10 ]; then
-            PYTHON="$cmd"
-            ok "找到 $cmd $ver"
-            break
-        else
-            warn "$cmd 版本为 $ver，需要 >= 3.10，跳过"
-        fi
-    fi
-done
-
-if [ -z "$PYTHON" ]; then
-    err "未找到 Python 3.10+，请先安装: https://www.python.org/downloads/"
-    err "macOS 用户可运行: brew install python@3.13"
-    exit 1
-fi
-
-# ---------------------------------------------------------------------------
-# 检测是否为外部托管的 Python（Homebrew 等，需要 --break-system-packages）
-# ---------------------------------------------------------------------------
-PIP_FLAGS=""
-EXTERNALLY_MANAGED=$("$PYTHON" -c "
-import sysconfig, os
-marker = os.path.join(sysconfig.get_path('stdlib'), 'EXTERNALLY-MANAGED')
-print('yes' if os.path.exists(marker) else 'no')
-")
-if [ "$EXTERNALLY_MANAGED" = "yes" ]; then
-    PIP_FLAGS="--break-system-packages"
-    warn "检测到外部托管的 Python（如 Homebrew），将使用 --break-system-packages 安装"
-fi
-
+CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+SKILL_DIR="$CLAUDE_DIR/skills/synth-card"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SRC_DIR="$SCRIPT_DIR/skills/synth-card"
 
 # ---------------------------------------------------------------------------
-# 升级 pip / setuptools
+# 卸载
 # ---------------------------------------------------------------------------
-step "升级 pip / setuptools"
-
-# shellcheck disable=SC2086
-"$PYTHON" -m pip install --upgrade pip $PIP_FLAGS -q      && ok "pip 已升级"        || warn "pip 升级失败，继续使用当前版本"
-# shellcheck disable=SC2086
-"$PYTHON" -m pip install --upgrade setuptools $PIP_FLAGS -q && ok "setuptools 已升级" || warn "setuptools 升级失败，继续使用当前版本"
-
-# ---------------------------------------------------------------------------
-# 安装 Synth 核心依赖
-# ---------------------------------------------------------------------------
-step "安装 Synth 核心依赖"
-
-# shellcheck disable=SC2086
-"$PYTHON" -m pip install -e "$SCRIPT_DIR" $PIP_FLAGS -q
-ok "Synth 核心依赖安装完成"
-
-# ---------------------------------------------------------------------------
-# 安装 graspologic（Leiden 社区检测，可选）
-# ---------------------------------------------------------------------------
-if [ "$LEIDEN" = true ]; then
-    step "安装 graspologic（Leiden 社区检测）"
-    echo "  graspologic 依赖 scipy / numpy / scikit-learn，首次安装可能需要几分钟..."
-
-    # shellcheck disable=SC2086
-    if "$PYTHON" -m pip install -e "$SCRIPT_DIR[leiden]" $PIP_FLAGS -q; then
-        ok "graspologic 安装完成，Leiden 算法已启用"
-    else
-        warn "graspologic 安装失败，将回退到 Louvain 算法（功能不受影响）"
-        warn "如需手动安装: $PYTHON -m pip install graspologic>=3.0 $PIP_FLAGS"
-    fi
-else
-    warn "已跳过 graspologic 安装（--no-leiden），社区检测将使用 Louvain 算法"
+if [[ "$UNINSTALL" == true ]]; then
+  step "卸载 synth-card skill"
+  if [[ -d "$SKILL_DIR" ]]; then
+    rm -rf "$SKILL_DIR"
+    ok "已移除 $SKILL_DIR"
+  else
+    warn "未找到已安装的 skill（$SKILL_DIR）"
+  fi
+  exit 0
 fi
 
 # ---------------------------------------------------------------------------
-# 验证安装
+# 检查源文件
 # ---------------------------------------------------------------------------
-step "验证安装"
-
-if ! "$PYTHON" -m synth --help &>/dev/null; then
-    err "synth CLI 验证失败，请检查上方错误信息"
-    exit 1
+step "检查源文件"
+if [[ ! -f "$SRC_DIR/SKILL.md" ]] || [[ ! -f "$SRC_DIR/synth_graph.py" ]]; then
+  err "找不到 skill 源文件，请在仓库根目录运行此脚本"
+  err "  预期路径: $SRC_DIR"
+  exit 1
 fi
-ok "synth CLI 可用"
+ok "源文件就绪: $SRC_DIR"
 
-MODULES=("anthropic" "networkx" "typer" "rich")
-for mod in "${MODULES[@]}"; do
-    if "$PYTHON" -c "import $mod" 2>/dev/null; then
-        ok "$mod"
+# ---------------------------------------------------------------------------
+# 安装 skill 文件
+# ---------------------------------------------------------------------------
+step "安装 skill 到 $SKILL_DIR"
+mkdir -p "$SKILL_DIR"
+cp "$SRC_DIR/SKILL.md"        "$SKILL_DIR/SKILL.md"
+cp "$SRC_DIR/synth_graph.py"  "$SKILL_DIR/synth_graph.py"
+chmod +x "$SKILL_DIR/synth_graph.py"
+ok "SKILL.md      → $SKILL_DIR/SKILL.md"
+ok "synth_graph.py → $SKILL_DIR/synth_graph.py"
+
+# ---------------------------------------------------------------------------
+# 安装 Python 依赖（仅 graphifyy，用于 graph-build）
+# ---------------------------------------------------------------------------
+if [[ "$INSTALL_DEP" == true ]]; then
+  step "安装 Python 依赖（graphifyy）"
+  if command -v pip3 &>/dev/null; then
+    PIP=pip3
+  elif command -v pip &>/dev/null; then
+    PIP=pip
+  else
+    warn "未找到 pip，跳过依赖安装"
+    warn "请手动执行: pip install graphifyy"
+    PIP=""
+  fi
+
+  if [[ -n "$PIP" ]]; then
+    if $PIP install --quiet graphifyy 2>/dev/null; then
+      ok "graphifyy 已安装"
+    elif $PIP install --quiet --break-system-packages graphifyy 2>/dev/null; then
+      ok "graphifyy 已安装（Homebrew Python，使用 --break-system-packages）"
     else
-        err "$mod 导入失败"
-        exit 1
+      warn "graphifyy 安装失败，请手动执行以下任一命令："
+      warn "  pip install graphifyy"
+      warn "  pip install graphifyy --break-system-packages  # Homebrew Python"
+      warn "  pip install graphifyy --user                   # 用户目录安装"
     fi
-done
-
-if "$PYTHON" -c "from graspologic.partition import leiden" 2>/dev/null; then
-    ok "graspologic (leiden) ✓ — 将使用 Leiden 社区检测算法"
-else
-    warn "graspologic 不可用 — 将回退到 Louvain 算法"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
 # 完成
 # ---------------------------------------------------------------------------
 echo ""
-echo -e "${BOLD}${GREEN}✓ 安装完成！${RESET}"
+echo -e "${BOLD}安装完成！${RESET}"
 echo ""
-echo "下一步："
-# 只在 Key 未设置或为空时才提示
-if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
-    echo "  1. 设置 API Key（二选一）:"
-    echo "       export ANTHROPIC_API_KEY=sk-ant-...   # 环境变量（推荐）"
-    echo "       或在 synth.toml 中设置 [llm] api_key  # 写入配置文件"
-    echo "       申请地址: https://console.anthropic.com/settings/keys"
-    echo ""
-    echo "  2. 创建配置文件:  synth init"
-    echo "  3. 编辑配置:      \$EDITOR synth.toml"
-    echo "  4. 运行合成:      synth run"
-else
-    ok "ANTHROPIC_API_KEY 已设置，无需额外配置"
-    echo ""
-    echo "  1. 创建配置文件:  synth init"
-    echo "  2. 编辑配置:      \$EDITOR synth.toml"
-    echo "  3. 运行合成:      synth run"
-fi
+echo "在 Claude Code 中输入 /synth-card 即可使用。"
 echo ""
+echo "示例："
+echo "  /synth-card                  # 自动检测当前仓库，选择模块"
+echo "  /synth-card auth             # 生成 auth 相关功能卡片"
+echo "  /synth-card --all            # 批量生成所有模块卡片"
+echo "  /synth-card ~/my-repo ingest # 指定仓库 + 功能关键词"
