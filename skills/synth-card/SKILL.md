@@ -1,6 +1,6 @@
 ---
 name: synth-card
-description: "Generate structured feature cards from a codebase. Use when the user wants to understand what a module/feature does, explore a repo's functionality, or produce shareable feature cards. Trigger: /synth-card"
+description: "Generate structured feature cards (Markdown) from a code index produced by /synth-index. Reads FUNCTION_INDEX.json — no graphify or tree-sitter required. Use when the user wants to understand what a module/feature does, explore a repo's functionality, or produce shareable feature cards. Trigger: /synth-card"
 trigger: /synth-card
 ---
 
@@ -18,7 +18,7 @@ Generate structured **feature cards** — a concise, readable summary of what a 
 /synth-card <path>               # run on a specific directory
 /synth-card <path> <feature>     # specific path + keyword
 /synth-card --lang en            # force English output
-/synth-card --rebuild            # force-rebuild the code graph
+/synth-card --rebuild            # force-rebuild the code index (calls /synth-index --force)
 /synth-card -o ./my-cards        # custom output dir (batch mode)
 ```
 
@@ -72,35 +72,32 @@ Parse the JSON. Fields:
 |-------|---------|
 | `repo_root` | Absolute path — use for all subsequent commands |
 | `repo_name` | Human-readable name for card header |
-| `has_graph` | Whether `graphify-out/graph.json` already exists |
-| `graph_mtime` | Unix timestamp of the graph (null if no graph) |
+| `has_index` | Whether `FUNCTION_INDEX.json` already exists |
+| `index_mtime` | Unix timestamp of the index (null if no index) |
 | `has_source` | Whether supported source files exist |
 
 If `has_source` is false, tell the user no supported source files were found (Python, JS/TS, Go, Rust, Java) and stop.
 
-If `has_graph` is true and `graph_mtime` is more than 24 hours old:
-> ⚠️ Code graph was built N days ago — run `/synth-card --rebuild` if the codebase has changed since then.
+If `has_index` is true and `index_mtime` is more than 24 hours old:
+> ⚠️ Code index was built N days ago — run `/synth-card --rebuild` if the codebase has changed since then.
 
 ---
 
-## Step 2 — Build the code graph (if needed)
+## Step 2 — Check for code index
 
-Skip this step if `has_graph` is true AND `--rebuild` was not passed.
+If `has_index` is false, tell the user and stop:
 
-If building, tell the user first: "Analyzing code structure — first run takes a moment…"
+```
+No code index found for {repo_root}.
 
-```bash
-# Without --rebuild:
-python3 "$SYNTH_GRAPH" graph-build "$REPO_ROOT"
-# With --rebuild:
-python3 "$SYNTH_GRAPH" graph-build "$REPO_ROOT" --force
+Run first:
+  /synth-index {repo_root}
+
+Then retry your /synth-card command.
 ```
 
-If the command fails with an import error, tell the user:
-```
-Run: pip install graphifyy
-```
-Then stop.
+If `--rebuild` was passed, run `/synth-index {repo_root} --force` before continuing.
+After a successful `/synth-index` run, re-run `graph-root` to refresh `REPO_ROOT`.
 
 ---
 
@@ -173,11 +170,29 @@ Using the JSON from `card-data` (where `action` is `"generate_card"`), write a c
 
 {One paragraph for a developer new to this codebase. State concretely what the module does,
 the key data flow, and any important design patterns or algorithms. Name the key
-classes/functions. Under 200 words.}
+classes/functions. Under 200 words.
+If nodes contain `docstring` fields, use them — quote them or paraphrase directly.}
+
+### Entry points
+
+{Only include this section if any node has a non-empty `entry_kind` field.
+List each entry-point node as:
+  - `{signature}` [{entry_kind}] — `{source_file}:{line_start}` — {one sentence from docstring or inferred}}
 
 ### Key components
 
-{Bullet list — one line per important class/function, one sentence on its role.}
+{Bullet list — one line per important class/function.
+Preferred format when `signature` is available:
+  - `{signature}` — {one sentence: what it does. Use docstring if present, otherwise infer from name.}
+Fallback when only `label` is available:
+  - `{label}` — {one sentence}
+If `line_start` is present, append the location: (`{source_file}:{line_start}`)}
+
+### Data models
+
+{Only include this section if `data_models` is non-empty.
+For each entry in `data_models`:
+  - `{signature}` [{kind}] — `{file_path}:{line_start}` — {docstring or inferred description}}
 
 ### Internal call relationships
 
@@ -193,9 +208,11 @@ Omit this section if nothing is apparent.}
 **Language:** Use the language set by `--lang`. When `--lang auto`, match the language the user wrote their `/synth-card` command in.
 
 Rules:
-- Only use data from `nodes` and `edges` — do not invent functionality
+- Only use data from `nodes`, `edges`, and `data_models` — do not invent functionality
+- When `has_index` is `true`, `signature` and `docstring` fields are AST-extracted facts — treat them as ground truth
+- When `has_index` is `false`, nodes only have `label` + `source_file` — infer cautiously from names
 - Each card must be self-contained — no "as described above" references
-- Specific > vague: name actual functions and classes rather than describing them generically
+- Specific > vague: use actual signatures rather than generic descriptions
 
 ---
 
@@ -212,9 +229,8 @@ Rules:
 | Situation | Action |
 |-----------|--------|
 | `synth_graph.py` not installed | Show install command, stop |
-| `graphifyy` not installed | Tell user to run `pip install graphifyy`, stop |
+| No `FUNCTION_INDEX.json` found | Tell user to run `/synth-index {repo_root}`, stop |
 | Path does not exist | Ask user to check the path |
 | No supported source files | List supported languages, stop |
-| `graph-build` fails | Show error, suggest `pip install graphifyy`, stop |
 | Keyword has no match | Show module list from `MODULE_JSON`, ask user to choose |
-| Graph is stale (>24 h) | Warn with `--rebuild` suggestion (do not block — proceed) |
+| Index is stale (>24 h) | Warn with `--rebuild` suggestion (do not block — proceed) |

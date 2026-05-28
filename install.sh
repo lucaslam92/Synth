@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# install.sh — Install Synth skills (synth-card + feature-map) into Claude Code
+# install.sh — Install Synth skills (synth-index + synth-card + feature-map) into Claude Code
 #
 # Usage:
-#   ./install.sh              # install both skills
-#   ./install.sh --no-dep     # skip pip install (graphifyy)
+#   ./install.sh              # install all three skills
+#   ./install.sh --no-dep     # skip pip install (graphifyy + tree-sitter)
 #   ./install.sh --uninstall  # remove installed skills
 #   ./install.sh --help
 
@@ -39,9 +39,10 @@ for arg in "$@"; do
       echo "  --no-dep     Skip pip install (graphifyy and tree-sitter packages)"
       echo "  --uninstall  Remove installed skills"
       echo ""
-      echo "Installs two Claude Code skills:"
+      echo "Installs three Claude Code skills:"
+      echo "  /synth-index  — Build FUNCTION_INDEX.json for a codebase"
       echo "  /synth-card   — Generate feature cards for code modules"
-      echo "  /feature-map  — Interactive HTML feature map + LLM JSON index"
+      echo "  /feature-map  — Interactive HTML feature map"
       exit 0
       ;;
     *) err "Unknown argument: $arg"; exit 1 ;;
@@ -52,9 +53,11 @@ done
 # Paths
 # ---------------------------------------------------------------------------
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
+SYNTH_INDEX_DEST="$CLAUDE_DIR/skills/synth-index"
 SYNTH_CARD_DEST="$CLAUDE_DIR/skills/synth-card"
 FEATURE_MAP_DEST="$CLAUDE_DIR/skills/feature-map"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+SYNTH_INDEX_SRC="$SCRIPT_DIR/skills/synth-index"
 SYNTH_CARD_SRC="$SCRIPT_DIR/skills/synth-card"
 FEATURE_MAP_SRC="$SCRIPT_DIR/skills/feature-map"
 
@@ -63,7 +66,7 @@ FEATURE_MAP_SRC="$SCRIPT_DIR/skills/feature-map"
 # ---------------------------------------------------------------------------
 if [[ "$UNINSTALL" == true ]]; then
   step "Uninstalling Synth skills"
-  for dir in "$SYNTH_CARD_DEST" "$FEATURE_MAP_DEST"; do
+  for dir in "$SYNTH_INDEX_DEST" "$SYNTH_CARD_DEST" "$FEATURE_MAP_DEST"; do
     if [[ -d "$dir" ]]; then
       rm -rf "$dir"
       ok "Removed $dir"
@@ -75,11 +78,26 @@ if [[ "$UNINSTALL" == true ]]; then
 fi
 
 # ---------------------------------------------------------------------------
+# Verify Python 3.8+
+# ---------------------------------------------------------------------------
+step "Checking Python version"
+if ! command -v python3 &>/dev/null; then
+  err "python3 not found — please install Python 3.8 or later"
+  exit 1
+fi
+if ! python3 -c "import sys; assert sys.version_info >= (3,8), 'too old'" 2>/dev/null; then
+  err "Python 3.8+ required (found: $(python3 --version 2>&1))"
+  exit 1
+fi
+ok "$(python3 --version)"
+
+# ---------------------------------------------------------------------------
 # Verify source files
 # ---------------------------------------------------------------------------
 step "Checking source files"
 errors=0
-for f in "$SYNTH_CARD_SRC/SKILL.md" "$SYNTH_CARD_SRC/synth_graph.py" \
+for f in "$SYNTH_INDEX_SRC/SKILL.md" "$SYNTH_INDEX_SRC/synth_index.py" \
+          "$SYNTH_CARD_SRC/SKILL.md"  "$SYNTH_CARD_SRC/synth_graph.py"  \
           "$FEATURE_MAP_SRC/SKILL.md" "$FEATURE_MAP_SRC/feature_map.py"; do
   if [[ ! -f "$f" ]]; then
     err "Missing: $f"
@@ -91,6 +109,19 @@ if [[ $errors -gt 0 ]]; then
   exit 1
 fi
 ok "Source files ready"
+
+# ---------------------------------------------------------------------------
+# Install synth-index
+# ---------------------------------------------------------------------------
+step "Installing synth-index → $SYNTH_INDEX_DEST"
+mkdir -p "$SYNTH_INDEX_DEST"
+cp "$SYNTH_INDEX_SRC/SKILL.md"       "$SYNTH_INDEX_DEST/SKILL.md"
+cp "$SYNTH_INDEX_SRC/synth_index.py" "$SYNTH_INDEX_DEST/synth_index.py"
+[ -f "$SYNTH_INDEX_SRC/requirements.txt" ] && \
+  cp "$SYNTH_INDEX_SRC/requirements.txt" "$SYNTH_INDEX_DEST/requirements.txt"
+chmod +x "$SYNTH_INDEX_DEST/synth_index.py"
+ok "SKILL.md       → $SYNTH_INDEX_DEST/SKILL.md"
+ok "synth_index.py → $SYNTH_INDEX_DEST/synth_index.py"
 
 # ---------------------------------------------------------------------------
 # Install synth-card
@@ -115,40 +146,48 @@ ok "SKILL.md       → $FEATURE_MAP_DEST/SKILL.md"
 ok "feature_map.py → $FEATURE_MAP_DEST/feature_map.py"
 
 # ---------------------------------------------------------------------------
-# Install Python dependencies
-# feature-map auto-installs its heavy deps (tree-sitter family) on first run.
-# We only pre-install graphifyy here, which is shared by both skills.
+# Install Python dependencies for synth-index
+# /synth-card and /feature-map only need stdlib Python — no deps to install.
+# /synth-index needs graphifyy + networkx + tree-sitter (auto-installs on first run;
+# we pre-install here for a faster first /synth-index run).
 # ---------------------------------------------------------------------------
 if [[ "$INSTALL_DEP" == true ]]; then
-  step "Installing Python dependency: graphifyy"
+  step "Installing Python dependencies for /synth-index"
   if command -v pip3 &>/dev/null; then
     PIP=pip3
   elif command -v pip &>/dev/null; then
     PIP=pip
   else
     warn "pip not found — skipping dependency install"
-    warn "Please run: pip install graphifyy"
+    warn "Please run: pip install graphifyy networkx tree-sitter tree-sitter-python tree-sitter-javascript tree-sitter-typescript"
     PIP=""
   fi
 
   if [[ -n "$PIP" ]]; then
-    if $PIP install --quiet graphifyy 2>/dev/null; then
-      ok "graphifyy installed"
-    elif $PIP install --quiet --break-system-packages graphifyy 2>/dev/null; then
-      ok "graphifyy installed (Homebrew Python, used --break-system-packages)"
+    REQS="$SYNTH_INDEX_DEST/requirements.txt"
+    if [[ -f "$REQS" ]]; then
+      if $PIP install --quiet -r "$REQS" 2>/dev/null; then
+        ok "Dependencies installed from requirements.txt"
+      elif $PIP install --quiet --break-system-packages -r "$REQS" 2>/dev/null; then
+        ok "Dependencies installed (Homebrew Python, used --break-system-packages)"
+      else
+        warn "Dependency install failed — please run one of:"
+        warn "  pip install -r $REQS"
+        warn "  pip install -r $REQS --break-system-packages  # Homebrew Python"
+        warn "  pip install -r $REQS --user                   # user install"
+      fi
     else
-      warn "graphifyy install failed — please run one of:"
-      warn "  pip install graphifyy"
-      warn "  pip install graphifyy --break-system-packages  # Homebrew Python"
-      warn "  pip install graphifyy --user                   # user install"
+      # Fallback: install individually
+      PKGS="graphifyy networkx tree-sitter tree-sitter-python tree-sitter-javascript tree-sitter-typescript"
+      if $PIP install --quiet $PKGS 2>/dev/null; then
+        ok "Dependencies installed"
+      elif $PIP install --quiet --break-system-packages $PKGS 2>/dev/null; then
+        ok "Dependencies installed (Homebrew Python, used --break-system-packages)"
+      else
+        warn "Dependency install failed — please run: pip install $PKGS"
+      fi
     fi
   fi
-
-  echo ""
-  warn "Note: /feature-map also needs tree-sitter packages."
-  warn "These are auto-installed the first time you run /feature-map."
-  warn "Or pre-install manually:"
-  warn "  pip install networkx tree-sitter tree-sitter-python tree-sitter-javascript tree-sitter-typescript"
 fi
 
 # ---------------------------------------------------------------------------
@@ -157,12 +196,19 @@ fi
 echo ""
 echo -e "${BOLD}Installation complete!${RESET}"
 echo ""
-echo "Restart Claude Code, then:"
+echo "Restart Claude Code, then use the three skills together:"
+echo ""
+echo "  /synth-index             — build code index for current directory"
+echo "  /synth-index /my/repo    — build code index for a specific repo"
+echo "  /synth-index . --force   — force rebuild after code changes"
+echo ""
+echo "  /feature-map             — render interactive HTML feature map"
+echo "  /feature-map ./src       — render HTML for a subdirectory"
 echo ""
 echo "  /synth-card              — generate a feature card for a code module"
 echo "  /synth-card auth         — card for anything matching 'auth'"
 echo "  /synth-card --all        — batch generate cards for all modules"
 echo ""
-echo "  /feature-map             — analyze current directory"
-echo "  /feature-map ./src       — analyze a subdirectory"
-echo "  /feature-map /my/repo    — analyze a specific project"
+echo "Typical workflow:"
+echo "  /synth-index → /feature-map   (explore visually)"
+echo "  /synth-index → /synth-card    (generate feature cards)"
