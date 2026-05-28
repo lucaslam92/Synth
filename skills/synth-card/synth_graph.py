@@ -21,7 +21,47 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
+
+
+# ---------------------------------------------------------------------------
+# graph-root  (replaces the inline Python block that was in SKILL.md)
+# ---------------------------------------------------------------------------
+
+
+def cmd_graph_root(args: argparse.Namespace) -> None:
+    """Locate the repo root and probe the environment.  JSON → stdout."""
+    start = Path(args.path).resolve()
+
+    def find_repo_root(p: Path) -> Path:
+        for candidate in [p, *p.parents]:
+            if (candidate / ".git").exists():
+                return candidate
+        return p
+
+    root = find_repo_root(start)
+    graph_path = root / "graphify-out" / "graph.json"
+
+    has_source = (
+        any(root.rglob("*.py")) or
+        any(root.rglob("*.ts")) or
+        any(root.rglob("*.js")) or
+        any(root.rglob("*.go")) or
+        any(root.rglob("*.rs")) or
+        any(root.rglob("*.java"))
+    )
+
+    graph_mtime: int | None = None
+    if graph_path.exists():
+        graph_mtime = int(graph_path.stat().st_mtime)
+
+    print(json.dumps({
+        "repo_root": str(root),
+        "repo_name": root.name,
+        "has_graph": graph_path.exists(),
+        "graph_mtime": graph_mtime,
+        "has_source": has_source,
+    }, ensure_ascii=False))
 
 
 # ---------------------------------------------------------------------------
@@ -331,6 +371,10 @@ def main() -> None:
     # version
     sub.add_parser("version", help="Print version and exit")
 
+    # graph-root
+    p_root = sub.add_parser("graph-root", help="Locate repo root + check environment (JSON output)")
+    p_root.add_argument("path", nargs="?", default=".", help="Starting path (default: .)")
+
     # graph-build
     p_build = sub.add_parser("graph-build", help="Build graphify-out/graph.json from source code")
     p_build.add_argument("path", nargs="?", default=".", help="Repository root (default: .)")
@@ -364,6 +408,8 @@ def main() -> None:
 
     if args.command == "version":
         print(VERSION)
+    elif args.command == "graph-root":
+        cmd_graph_root(args)
     elif args.command == "graph-build":
         cmd_graph_build(args)
     elif args.command == "graph-list":

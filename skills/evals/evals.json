@@ -1,0 +1,40 @@
+{
+  "skill_names": ["synth-card", "feature-map"],
+  "evals": [
+    {
+      "id": 1,
+      "skill": "synth-card",
+      "prompt": "/synth-card synth_graph",
+      "expected_output": "A structured feature card in Markdown for the synth_graph module, with sections: Feature Card header, table with Repo/Primary path/Components, What it does, Key components, Internal call relationships. Must be based on actual graph data from the installed skill, not invented.",
+      "files": []
+    },
+    {
+      "id": 2,
+      "skill": "synth-card",
+      "prompt": "/synth-card --rebuild synth_graph",
+      "expected_output": "Same as eval 1 but should trigger a graph rebuild (running graph-build --force) before generating the card. Should mention 'rebuilding' or 'analyzing code structure' before the card appears.",
+      "files": []
+    },
+    {
+      "id": 3,
+      "skill": "synth-card",
+      "prompt": "/synth-card --all",
+      "expected_output": "Batch generates cards for all detected modules. Should print a summary like '✓ Generated N feature cards → synth-out/cards/' after writing each card to synth-out/cards/<label>.md",
+      "files": []
+    },
+    {
+      "id": 4,
+      "skill": "feature-map",
+      "prompt": "/feature-map .",
+      "expected_output": "Runs feature_map.py on current directory, reports N feature modules and M functions found, shows path to functionality.html and FUNCTION_INDEX.json. Output goes to ./feature-map-out/, NOT inside the analyzed repo.",
+      "files": []
+    },
+    {
+      "id": 5,
+      "skill": "synth-card",
+      "prompt": "/synth-card --lang en graph_build",
+      "expected_output": "Feature card for the graph-build related code, output in English regardless of system locale.",
+      "files": []
+    }
+  ]
+}

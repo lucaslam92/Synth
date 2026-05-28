@@ -1,16 +1,16 @@
 #!/usr/bin/env bash
-# install.sh — 安装 synth-card skill 到 Claude Code
+# install.sh — Install Synth skills (synth-card + feature-map) into Claude Code
 #
-# 用法:
-#   ./install.sh            # 安装 skill（含依赖检查）
-#   ./install.sh --no-dep   # 跳过 pip 依赖安装
-#   ./install.sh --uninstall
+# Usage:
+#   ./install.sh              # install both skills
+#   ./install.sh --no-dep     # skip pip install (graphifyy)
+#   ./install.sh --uninstall  # remove installed skills
 #   ./install.sh --help
 
 set -euo pipefail
 
 # ---------------------------------------------------------------------------
-# 颜色输出
+# Color output
 # ---------------------------------------------------------------------------
 RED='\033[0;31m'
 GREEN='\033[0;32m'
@@ -24,7 +24,7 @@ err()  { echo -e "${RED}✗${RESET}  $*" >&2; }
 step() { echo -e "\n${BOLD}▶ $*${RESET}"; }
 
 # ---------------------------------------------------------------------------
-# 参数解析
+# Argument parsing
 # ---------------------------------------------------------------------------
 INSTALL_DEP=true
 UNINSTALL=false
@@ -34,99 +34,135 @@ for arg in "$@"; do
     --no-dep)     INSTALL_DEP=false ;;
     --uninstall)  UNINSTALL=true ;;
     --help|-h)
-      echo "用法: ./install.sh [--no-dep] [--uninstall]"
+      echo "Usage: ./install.sh [--no-dep] [--uninstall]"
       echo ""
-      echo "  --no-dep     跳过 pip 依赖安装（graphifyy）"
-      echo "  --uninstall  移除已安装的 skill"
+      echo "  --no-dep     Skip pip install (graphifyy and tree-sitter packages)"
+      echo "  --uninstall  Remove installed skills"
+      echo ""
+      echo "Installs two Claude Code skills:"
+      echo "  /synth-card   — Generate feature cards for code modules"
+      echo "  /feature-map  — Interactive HTML feature map + LLM JSON index"
       exit 0
       ;;
-    *) err "未知参数: $arg"; exit 1 ;;
+    *) err "Unknown argument: $arg"; exit 1 ;;
   esac
 done
 
 # ---------------------------------------------------------------------------
-# 确定 skill 安装目录
+# Paths
 # ---------------------------------------------------------------------------
 CLAUDE_DIR="${CLAUDE_CONFIG_DIR:-$HOME/.claude}"
-SKILL_DIR="$CLAUDE_DIR/skills/synth-card"
+SYNTH_CARD_DEST="$CLAUDE_DIR/skills/synth-card"
+FEATURE_MAP_DEST="$CLAUDE_DIR/skills/feature-map"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-SRC_DIR="$SCRIPT_DIR/skills/synth-card"
+SYNTH_CARD_SRC="$SCRIPT_DIR/skills/synth-card"
+FEATURE_MAP_SRC="$SCRIPT_DIR/skills/feature-map"
 
 # ---------------------------------------------------------------------------
-# 卸载
+# Uninstall
 # ---------------------------------------------------------------------------
 if [[ "$UNINSTALL" == true ]]; then
-  step "卸载 synth-card skill"
-  if [[ -d "$SKILL_DIR" ]]; then
-    rm -rf "$SKILL_DIR"
-    ok "已移除 $SKILL_DIR"
-  else
-    warn "未找到已安装的 skill（$SKILL_DIR）"
-  fi
+  step "Uninstalling Synth skills"
+  for dir in "$SYNTH_CARD_DEST" "$FEATURE_MAP_DEST"; do
+    if [[ -d "$dir" ]]; then
+      rm -rf "$dir"
+      ok "Removed $dir"
+    else
+      warn "Not found: $dir"
+    fi
+  done
   exit 0
 fi
 
 # ---------------------------------------------------------------------------
-# 检查源文件
+# Verify source files
 # ---------------------------------------------------------------------------
-step "检查源文件"
-if [[ ! -f "$SRC_DIR/SKILL.md" ]] || [[ ! -f "$SRC_DIR/synth_graph.py" ]]; then
-  err "找不到 skill 源文件，请在仓库根目录运行此脚本"
-  err "  预期路径: $SRC_DIR"
+step "Checking source files"
+errors=0
+for f in "$SYNTH_CARD_SRC/SKILL.md" "$SYNTH_CARD_SRC/synth_graph.py" \
+          "$FEATURE_MAP_SRC/SKILL.md" "$FEATURE_MAP_SRC/feature_map.py"; do
+  if [[ ! -f "$f" ]]; then
+    err "Missing: $f"
+    errors=$((errors + 1))
+  fi
+done
+if [[ $errors -gt 0 ]]; then
+  err "Run this script from the Synth repo root directory."
   exit 1
 fi
-ok "源文件就绪: $SRC_DIR"
+ok "Source files ready"
 
 # ---------------------------------------------------------------------------
-# 安装 skill 文件
+# Install synth-card
 # ---------------------------------------------------------------------------
-step "安装 skill 到 $SKILL_DIR"
-mkdir -p "$SKILL_DIR"
-cp "$SRC_DIR/SKILL.md"        "$SKILL_DIR/SKILL.md"
-cp "$SRC_DIR/synth_graph.py"  "$SKILL_DIR/synth_graph.py"
-chmod +x "$SKILL_DIR/synth_graph.py"
-ok "SKILL.md      → $SKILL_DIR/SKILL.md"
-ok "synth_graph.py → $SKILL_DIR/synth_graph.py"
+step "Installing synth-card → $SYNTH_CARD_DEST"
+mkdir -p "$SYNTH_CARD_DEST"
+cp "$SYNTH_CARD_SRC/SKILL.md"        "$SYNTH_CARD_DEST/SKILL.md"
+cp "$SYNTH_CARD_SRC/synth_graph.py"  "$SYNTH_CARD_DEST/synth_graph.py"
+chmod +x "$SYNTH_CARD_DEST/synth_graph.py"
+ok "SKILL.md       → $SYNTH_CARD_DEST/SKILL.md"
+ok "synth_graph.py → $SYNTH_CARD_DEST/synth_graph.py"
 
 # ---------------------------------------------------------------------------
-# 安装 Python 依赖（仅 graphifyy，用于 graph-build）
+# Install feature-map
+# ---------------------------------------------------------------------------
+step "Installing feature-map → $FEATURE_MAP_DEST"
+mkdir -p "$FEATURE_MAP_DEST"
+cp "$FEATURE_MAP_SRC/SKILL.md"       "$FEATURE_MAP_DEST/SKILL.md"
+cp "$FEATURE_MAP_SRC/feature_map.py" "$FEATURE_MAP_DEST/feature_map.py"
+chmod +x "$FEATURE_MAP_DEST/feature_map.py"
+ok "SKILL.md       → $FEATURE_MAP_DEST/SKILL.md"
+ok "feature_map.py → $FEATURE_MAP_DEST/feature_map.py"
+
+# ---------------------------------------------------------------------------
+# Install Python dependencies
+# feature-map auto-installs its heavy deps (tree-sitter family) on first run.
+# We only pre-install graphifyy here, which is shared by both skills.
 # ---------------------------------------------------------------------------
 if [[ "$INSTALL_DEP" == true ]]; then
-  step "安装 Python 依赖（graphifyy）"
+  step "Installing Python dependency: graphifyy"
   if command -v pip3 &>/dev/null; then
     PIP=pip3
   elif command -v pip &>/dev/null; then
     PIP=pip
   else
-    warn "未找到 pip，跳过依赖安装"
-    warn "请手动执行: pip install graphifyy"
+    warn "pip not found — skipping dependency install"
+    warn "Please run: pip install graphifyy"
     PIP=""
   fi
 
   if [[ -n "$PIP" ]]; then
     if $PIP install --quiet graphifyy 2>/dev/null; then
-      ok "graphifyy 已安装"
+      ok "graphifyy installed"
     elif $PIP install --quiet --break-system-packages graphifyy 2>/dev/null; then
-      ok "graphifyy 已安装（Homebrew Python，使用 --break-system-packages）"
+      ok "graphifyy installed (Homebrew Python, used --break-system-packages)"
     else
-      warn "graphifyy 安装失败，请手动执行以下任一命令："
+      warn "graphifyy install failed — please run one of:"
       warn "  pip install graphifyy"
       warn "  pip install graphifyy --break-system-packages  # Homebrew Python"
-      warn "  pip install graphifyy --user                   # 用户目录安装"
+      warn "  pip install graphifyy --user                   # user install"
     fi
   fi
+
+  echo ""
+  warn "Note: /feature-map also needs tree-sitter packages."
+  warn "These are auto-installed the first time you run /feature-map."
+  warn "Or pre-install manually:"
+  warn "  pip install networkx tree-sitter tree-sitter-python tree-sitter-javascript tree-sitter-typescript"
 fi
 
 # ---------------------------------------------------------------------------
-# 完成
+# Done
 # ---------------------------------------------------------------------------
 echo ""
-echo -e "${BOLD}安装完成！${RESET}"
+echo -e "${BOLD}Installation complete!${RESET}"
 echo ""
-echo "在 Claude Code 中输入 /synth-card 即可使用。"
+echo "Restart Claude Code, then:"
 echo ""
-echo "示例："
-echo "  /synth-card                  # 自动检测当前仓库，选择模块"
-echo "  /synth-card auth             # 生成 auth 相关功能卡片"
-echo "  /synth-card --all            # 批量生成所有模块卡片"
-echo "  /synth-card ~/my-repo ingest # 指定仓库 + 功能关键词"
+echo "  /synth-card              — generate a feature card for a code module"
+echo "  /synth-card auth         — card for anything matching 'auth'"
+echo "  /synth-card --all        — batch generate cards for all modules"
+echo ""
+echo "  /feature-map             — analyze current directory"
+echo "  /feature-map ./src       — analyze a subdirectory"
+echo "  /feature-map /my/repo    — analyze a specific project"
